@@ -22,25 +22,40 @@ locals {
     }
   }
 
-  # rag/vkey 둘 다 완전히 동일한 규칙을 쓰고 있음(kubectl로 확인됨).
+  # 2026-11-12: 배포가 ArgoCD(wsu/deploy-rag, wsu/deploy-vkey)로 넘어가면서 배포 목적 쓰기 권한을 회수.
+  #   - 앱 배포·설정 변경은 deploy 저장소 PR 로만 한다. 직접 고쳐도 ArgoCD selfHeal 이 되돌린다.
+  #   - Secret·postgres·pgadmin·라우트 변경은 인프라 담당(cluster-admin)이 한다.
+  # 남긴 것: 조회, 로그, exec/port-forward(디버깅·DB 접속), Pod 삭제(재시작).
   dev_role_rules = [
     {
       api_groups = [""]
-      resources = [
-        "pods", "pods/log", "pods/exec", "pods/portforward",
-        "services", "configmaps", "secrets", "persistentvolumeclaims",
-      ]
-      verbs = ["get", "list", "watch", "create", "update", "patch", "delete"]
+      resources  = ["pods"]
+      verbs      = ["get", "list", "watch", "delete"]
+    },
+    {
+      api_groups = [""]
+      resources  = ["pods/log"]
+      verbs      = ["get", "list", "watch"]
+    },
+    {
+      api_groups = [""]
+      resources  = ["pods/exec", "pods/portforward"]
+      verbs      = ["get", "create"]
+    },
+    {
+      api_groups = [""]
+      resources  = ["services", "configmaps", "persistentvolumeclaims", "events"]
+      verbs      = ["get", "list", "watch"]
     },
     {
       api_groups = ["apps"]
       resources  = ["deployments", "replicasets", "statefulsets"]
-      verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+      verbs      = ["get", "list", "watch"]
     },
     {
       api_groups = ["gateway.networking.k8s.io"]
       resources  = ["httproutes"]
-      verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+      verbs      = ["get", "list", "watch"]
     },
   ]
 }
