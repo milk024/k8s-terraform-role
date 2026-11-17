@@ -63,14 +63,32 @@ flowchart LR
 
 두 팀 모두 동일한 Role 규칙을 사용합니다. 권한은 **Namespace 범위(Role)** 로만 부여되며 ClusterRole은 사용하지 않습니다.
 
-| API Group | Resources | Verbs |
+배포는 ArgoCD(GitOps)가 담당하므로, 개발자 SA에는 **조회 · 디버깅 · Pod 재시작**에 필요한 권한만 남겼습니다.
+
+| API Group | Resources | Verbs | 용도 |
+| --- | --- | --- | --- |
+| `""` (core) | pods | get, list, watch, delete | 조회, Pod 삭제로 재시작 |
+| `""` (core) | pods/log | get, list, watch | 로그 확인 |
+| `""` (core) | pods/exec, pods/portforward | get, create | 디버깅, DB 접속 |
+| `""` (core) | services, configmaps, persistentvolumeclaims, events | get, list, watch | 조회 |
+| `apps` | deployments, replicasets, statefulsets | get, list, watch | 조회 |
+| `gateway.networking.k8s.io` | httproutes | get, list, watch | 조회 |
+
+`secrets`는 조회 권한도 없습니다. Secret, DB, 라우트 변경은 인프라 담당(cluster-admin)이 처리합니다.
+
+## 4-1. 권한 변경 이력
+
+코드로 관리하면서 권한 변경도 커밋 단위로 남게 되었습니다.
+
+| 시점 | 변경 | 이유 |
 | --- | --- | --- |
-| `""` (core) | pods, pods/log, pods/exec, pods/portforward, services, configmaps, secrets, persistentvolumeclaims | get, list, watch, create, update, patch, delete |
-| `apps` | deployments, replicasets, statefulsets | 〃 |
-| `gateway.networking.k8s.io` | httproutes | 〃 |
+| 2026-09-18 | 라이브 클러스터 RBAC를 그대로 코드화 (팀 SA에 core/apps/httproute 전체 쓰기 + secrets 접근) | 엑셀 대장과 실제 권한 불일치 해소, 현재 상태를 기준선으로 고정 |
+| 2026-11-12 | 배포 목적 쓰기 권한 전부 회수, `secrets` 접근 제거, `events` 조회 추가 | 배포가 ArgoCD(deploy 저장소 PR)로 이관됨. 직접 수정해도 ArgoCD selfHeal이 되돌리므로 쓰기 권한은 위험만 남김 |
+| 2026-11-12 | 개인별 cluster-admin SA 시도 후 철회 | 공용 SA 대신 개인 단위 관리자 SA를 시도했으나 실제 사용 흐름에 맞지 않아 revert. 관리자 권한은 인프라 담당으로 한정 |
 
 ## 5. 설계 결정
 
+- **GitOps와 역할 분리**: 앱 배포·설정 변경은 ArgoCD deploy 저장소 PR로만 하고, RBAC는 이 저장소에서 관리합니다. 개발자 SA는 "보고 디버깅하는" 용도로 한정해 최소 권한 원칙을 따릅니다.
 - **팀 공용 ServiceAccount**: 개인별 SA가 아니라 팀당 SA 하나를 공유하는 것은 의도된 설계입니다. 책임은 팀 단위로 지고, 인원 변동 시 RBAC 리소스를 바꿀 필요가 없습니다.
 - **`automount_service_account_token = false`**: 라이브 클러스터의 실제 값에 맞추기 위해 명시했습니다. provider 기본값(`true`)과 달라 생략하면 plan에 의도치 않은 diff가 생깁니다. 이 SA는 Pod 실행용이 아닌 사람의 접근용이므로 토큰 자동 마운트를 막는 것이 보안상으로도 맞습니다.
 - **데이터와 로직 분리**: 팀 정보(`local.dev_teams`)와 권한 규칙(`local.dev_role_rules`)을 리소스 정의에서 분리하여, 새 팀 추가는 map에 항목 하나만 넣으면 됩니다.
@@ -129,6 +147,8 @@ newteam = {
 
 - `*.tfstate`, `*.tfvars`, `.terraform/`은 `.gitignore`로 커밋에서 제외 (state에는 리소스 상세값이 포함될 수 있음)
 - 권한은 Namespace 범위로 한정 — 다른 팀 Namespace나 클러스터 전역 리소스에는 접근 불가
+- 개발자 SA는 읽기 위주 권한만 보유, `secrets` 접근 불가
+- Terraform은 SA 토큰 Secret을 만들지 않으므로 tfstate에 토큰이 남지 않음 (토큰은 `kubectl create token`으로 단기 발급)
 - SA 토큰 자동 마운트 비활성화
 
 ## 9. 향후 개선 계획
@@ -137,4 +157,5 @@ newteam = {
 - [ ] GitHub Actions로 PR마다 `terraform fmt -check` / `validate` / `plan` 자동 실행
 - [ ] 주기적 `terraform plan`으로 drift 감지 알림
 - [ ] 팀별 권한 차등이 필요해지면 `dev_role_rules`를 팀 단위 override 구조로 확장
-- [ ] `secrets`, `pods/exec` 등 고위험 권한의 최소 권한 원칙 재검토
+- [x] 배포 권한 회수 및 `secrets` 접근 제거 (2026-11-12, ArgoCD 이관)
+- [ ] `pods/exec` 사용 범위 재검토 (DB 접속 외 용도 제한)
